@@ -8,8 +8,10 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     PROCESSENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+    OpenProcess, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
 };
+
+use crate::launcher;
 
 const CLIENT_EXE: [&str; 2] = ["octaneplayer.exe", "robloxplayerbeta.exe"];
 const PRIMARY: [u8; 17] = [
@@ -50,6 +52,7 @@ fn wide_to_string(value: &[u16]) -> String {
 }
 
 fn find_client() -> Option<u32> {
+    let root = launcher::install_root_lowercase().ok()?;
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
@@ -61,7 +64,9 @@ fn find_client() -> Option<u32> {
         let mut found = None;
         while ok != 0 {
             let name = wide_to_string(&entry.szExeFile).to_ascii_lowercase();
-            if CLIENT_EXE.contains(&name.as_str()) {
+            if CLIENT_EXE.contains(&name.as_str())
+                && launcher::process_image_under(entry.th32ProcessID, &root)
+            {
                 found = Some(entry.th32ProcessID);
                 break;
             }
@@ -131,6 +136,7 @@ fn primary_rva(exe: &[u8]) -> Option<u32> {
 
 pub struct Engine {
     session: Option<Session>,
+    scanned: Option<(String, Option<u32>)>,
 }
 
 struct Session {
@@ -143,7 +149,10 @@ struct Session {
 
 impl Engine {
     pub fn new() -> Self {
-        Engine { session: None }
+        Engine {
+            session: None,
+            scanned: None,
+        }
     }
 
     pub fn apply(&mut self, fps: i64) -> bool {
@@ -153,7 +162,7 @@ impl Engine {
         };
         if self.session.as_ref().map(|session| session.pid) != Some(pid) {
             self.close();
-            self.session = Session::open(pid);
+            self.session = self.open(pid);
         }
         if let Some(session) = self.session.as_mut() {
             if !session.apply(fps) {
@@ -161,6 +170,15 @@ impl Engine {
             }
         }
         true
+    }
+
+    fn open(&mut self, pid: u32) -> Option<Session> {
+        let (base, path) = module_base(pid)?;
+        if self.scanned.as_ref().map(|(scanned, _)| scanned) != Some(&path) {
+            let rva = fs::read(&path).ok().and_then(|exe| primary_rva(&exe));
+            self.scanned = Some((path, rva));
+        }
+        Session::open(pid, base, self.scanned.as_ref()?.1?)
     }
 
     fn close(&mut self) {
@@ -173,13 +191,10 @@ impl Engine {
 }
 
 impl Session {
-    fn open(pid: u32) -> Option<Session> {
-        let (base, path) = module_base(pid)?;
-        let exe = fs::read(&path).ok()?;
-        let rva = primary_rva(&exe)?;
+    fn open(pid: u32, base: u32, rva: u32) -> Option<Session> {
         let handle = unsafe {
             OpenProcess(
-                PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+                PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
                 0,
                 pid,
             )

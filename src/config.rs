@@ -14,6 +14,7 @@ const CLIENT: &str = "2021";
 pub enum Kind {
     Player,
     Studio,
+    Voice,
 }
 
 pub const KINDS: [Kind; 2] = [Kind::Player, Kind::Studio];
@@ -28,6 +29,7 @@ impl Kind {
         match self {
             Kind::Player => "octane-player",
             Kind::Studio => "octane-studio",
+            Kind::Voice => "octane-voice",
         }
     }
 
@@ -35,6 +37,7 @@ impl Kind {
         match self {
             Kind::Player => "Octane",
             Kind::Studio => "Octane Studio",
+            Kind::Voice => "Octane Voice",
         }
     }
 
@@ -42,21 +45,23 @@ impl Kind {
         match self {
             Kind::Player => "OctanePlayer.exe",
             Kind::Studio => "RobloxStudioBeta.exe",
+            Kind::Voice => "OctaneVoice.exe",
         }
     }
 
     pub fn dir(self) -> Result<PathBuf> {
-        let folder = match self {
-            Kind::Player => "clients",
-            Kind::Studio => "Studio",
-        };
-        Ok(install_root()?.join(folder).join(CLIENT))
+        Ok(match self {
+            Kind::Player => install_root()?.join("clients").join(CLIENT),
+            Kind::Studio => install_root()?.join("Studio").join(CLIENT),
+            Kind::Voice => install_root()?.join("voice"),
+        })
     }
 
     pub fn marker_file(self) -> Result<PathBuf> {
         let name = match self {
             Kind::Player => format!("INSTALLED-{CLIENT}"),
             Kind::Studio => format!("INSTALLED-studio-{CLIENT}"),
+            Kind::Voice => "INSTALLED-voice".to_string(),
         };
         Ok(state_dir()?.join(name))
     }
@@ -65,6 +70,7 @@ impl Kind {
         match self {
             Kind::Player => format!("{BASE_URL}/setup/{CLIENT}"),
             Kind::Studio => format!("{BASE_URL}/setup/studio/{CLIENT}"),
+            Kind::Voice => format!("{BASE_URL}/setup/voice"),
         }
     }
 
@@ -76,6 +82,7 @@ impl Kind {
         let suffix = match self {
             Kind::Player => "client",
             Kind::Studio => "studio",
+            Kind::Voice => "voice",
         };
         format!("{}/{version}-{suffix}.zip", self.setup_url())
     }

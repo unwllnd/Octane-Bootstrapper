@@ -1,6 +1,8 @@
 [build]
-target = "x86_64-pc-windows-gnu"
+target = "x86_64-win7-windows-msvc"
 
-[target.x86_64-pc-windows-gnu]
-linker = "x86_64-w64-mingw32-gcc"
-ar = "x86_64-w64-mingw32-ar"
+[target.x86_64-win7-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard", "-L", "native=C:/tmp/octane-launcher/winlibs"]
+
+[unstable]
+build-std = ["std", "panic_abort"]

@@ -1,6 +1,6 @@
 [package]
 name = "octane-bootstrapper"
-version = "12.0.0"
+version = "18.0.0"
 edition = "2021"
 description = "Official Octane client bootstrapper"
 
@@ -24,6 +24,7 @@ windows               = { version = "0.52", features = ["Win32_Foundation", "Win
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 ico   = "0.3"
+embed-resource = "3"
 
 [profile.release]
 opt-level     = "z"

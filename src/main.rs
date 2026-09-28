@@ -12,12 +12,15 @@ use std::thread;
 
 use anyhow::{anyhow, Result};
 use eframe::egui::ViewportBuilder;
+use windows::core::w;
+use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 use config::Kind;
 
 const WINDOW_SIZE: [f32; 2] = [480.0, 250.0];
 
 fn main() -> Result<()> {
+    unsafe { SetCurrentProcessExplicitAppUserModelID(w!("Octane.Launcher"))? };
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|arg| arg == rpc::WATCH_FLAG) {
         return rpc::watch_and_play(&args[1..]);

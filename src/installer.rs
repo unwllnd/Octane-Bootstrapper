@@ -184,6 +184,10 @@ fn write_state(file: &Path, value: &str) -> Result<()> {
         .with_context(|| format!("writing {}", file.display()))
 }
 
+pub fn is_installed(kind: Kind) -> Result<bool> {
+    Ok(kind.marker_file()?.is_file() && kind.dir()?.join(kind.exe()).is_file())
+}
+
 pub fn ensure_installed(http: &Client, kind: Kind, state: &BootstrapState) -> Result<bool> {
     let version = fetch_text(http, &kind.version_url())?;
     let marker = kind.marker_file()?;

@@ -11,6 +11,7 @@ use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
+use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -79,6 +80,7 @@ fn launch_args(kind: Kind, url: &str) -> Result<Vec<String>> {
             "-universeId".into(),
             param("universeId")?,
         ],
+        Kind::Voice => Vec::new(),
     })
 }
 
@@ -102,6 +104,18 @@ pub fn run_pipeline(launch: Launch, state: &BootstrapState) -> Result<()> {
     if kind == Kind::Studio && freshly_installed {
         installer::create_studio_shortcuts(&launcher)?;
     }
+    if kind == Kind::Player && !installer::is_installed(Kind::Studio)? {
+        state.status(&format!("Installing {}...", Kind::Studio.label()));
+        installer::ensure_installed(&http, Kind::Studio, state)?;
+        installer::create_studio_shortcuts(&launcher)?;
+    }
+
+    if kind == Kind::Player && args.is_some() && voice_supported() {
+        if !installer::is_installed(Kind::Voice)? {
+            state.status(&format!("Installing {}...", Kind::Voice.label()));
+        }
+        let _ = installer::ensure_installed(&http, Kind::Voice, state);
+    }
 
     if kind == Kind::Player && args.is_none() {
         state.status("Octane is ready. Launch from the website to start.");
@@ -122,6 +136,7 @@ pub fn run_pipeline(launch: Launch, state: &BootstrapState) -> Result<()> {
         Kind::Studio => {
             rpc::spawn_studio_watcher(&exe, &args)?;
         }
+        Kind::Voice => {}
     }
     state.status("Have fun!");
     thread::sleep(CLOSE_DELAY);
@@ -138,6 +153,14 @@ fn create_client_storage(client_dir: &Path) -> Result<()> {
         fs::create_dir_all(storage_root.join(dir))?;
     }
     Ok(())
+}
+
+pub fn voice_supported() -> bool {
+    let dll: Vec<u16> = "bcryptprimitives.dll".encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let module = LoadLibraryW(dll.as_ptr());
+        module != 0 && GetProcAddress(module, b"ProcessPrng\0".as_ptr()).is_some()
+    }
 }
 
 pub fn install_root_lowercase() -> Result<String> {

@@ -5,7 +5,7 @@ use std::mem::{size_of, zeroed};
 use std::path::PathBuf;
 use std::process::Command;
 use std::ptr::null;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use anyhow::{Context, Result};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -15,10 +15,11 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuRadioItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-    DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostQuitMessage,
-    RegisterClassW, SetForegroundWindow, SetTimer, TrackPopupMenu, TranslateMessage, MF_BYCOMMAND,
-    MF_SEPARATOR, MF_STRING, MSG, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
-    WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    DestroyWindow, DispatchMessageW, FindWindowExW, GetCursorPos, GetMessageW, LoadIconW,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, TrackPopupMenu,
+    TranslateMessage, MF_BYCOMMAND, MF_SEPARATOR, MF_STRING, MSG, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPED,
 };
 
 use crate::config;
@@ -39,8 +40,10 @@ const OPTIONS: [(&str, i64); 8] = [
 const WM_TRAYICON: u32 = WM_APP + 1;
 const MENU_BASE: u32 = 1000;
 const MENU_EXIT: u32 = 2000;
+const CLIENT_WAIT_SECONDS: u32 = 60;
 
 static SEEN_CLIENT: AtomicBool = AtomicBool::new(false);
+static WAITED_SECONDS: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
@@ -81,6 +84,7 @@ pub fn run_window() -> Result<()> {
     unsafe {
         let instance = GetModuleHandleW(null());
         let class_name = wide("OctaneFpsTray");
+        close_other_trays(&class_name);
         let mut class: WNDCLASSW = zeroed();
         class.lpfnWndProc = Some(window_proc);
         class.hInstance = instance;
@@ -126,6 +130,14 @@ pub fn run_window() -> Result<()> {
     Ok(())
 }
 
+unsafe fn close_other_trays(class_name: &[u16]) {
+    let mut window = FindWindowExW(0, 0, class_name.as_ptr(), null());
+    while window != 0 {
+        PostMessageW(window, WM_CLOSE, 0, 0);
+        window = FindWindowExW(0, window, class_name.as_ptr(), null());
+    }
+}
+
 unsafe extern "system" fn window_proc(
     window: HWND,
     message: u32,
@@ -147,7 +159,9 @@ unsafe extern "system" fn window_proc(
         WM_TIMER => {
             if apply(saved_fps()) {
                 SEEN_CLIENT.store(true, Ordering::Relaxed);
-            } else if SEEN_CLIENT.load(Ordering::Relaxed) {
+            } else if SEEN_CLIENT.load(Ordering::Relaxed)
+                || WAITED_SECONDS.fetch_add(1, Ordering::Relaxed) >= CLIENT_WAIT_SECONDS
+            {
                 DestroyWindow(window);
             }
             0

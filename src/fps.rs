@@ -1,0 +1,188 @@
+use std::cell::RefCell;
+use std::fs;
+use std::mem::{size_of, zeroed};
+use std::path::PathBuf;
+use std::process::Command;
+use std::ptr::null;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+use anyhow::{Context, Result};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Shell::{Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CheckMenuRadioItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
+    DestroyWindow, DispatchMessageW, FindWindowExW, GetCursorPos, GetMessageW, LoadIconW,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, TrackPopupMenu,
+    TranslateMessage, MF_BYCOMMAND, MF_SEPARATOR, MF_STRING, MSG, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPED,
+};
+
+use crate::config;
+use crate::wide;
+use crate::fpsmem::Engine;
+
+pub const FPS_FLAG: &str = "--fps";
+const UNLIMITED: i64 = 9999;
+pub const OPTIONS: [(&str, i64); 8] = [
+    ("60", 60),
+    ("75", 75),
+    ("120", 120),
+    ("144", 144),
+    ("165", 165),
+    ("240", 240),
+    ("360", 360),
+    ("Unlimited", UNLIMITED),
+];
+const WM_TRAYICON: u32 = WM_APP + 1;
+const MENU_BASE: u32 = 1000;
+const MENU_EXIT: u32 = 2000;
+const CLIENT_WAIT_SECONDS: u32 = 60;
+const TRAY_CLASS: &str = "OctaneFpsTray";
+const TRAY_TITLE: &str = "Octane FPS";
+const TRAY_ICON_ID: u32 = 1;
+const ICON_RESOURCE: usize = 1;
+const TIMER_ID: usize = 1;
+const TIMER_INTERVAL_MS: u32 = 1000;
+const LOW_WORD: isize = 0xffff;
+
+static SEEN_CLIENT: AtomicBool = AtomicBool::new(false);
+static WAITED_SECONDS: AtomicU32 = AtomicU32::new(0);
+
+thread_local! {
+    static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
+}
+
+fn state_file() -> Result<PathBuf> {
+    Ok(config::install_root()?.join("state").join("fps"))
+}
+
+pub fn saved_fps() -> i64 {
+    let saved = state_file().ok().and_then(|path| fs::read_to_string(path).ok());
+    saved.and_then(|value| value.trim().parse().ok()).unwrap_or(UNLIMITED)
+}
+
+fn save_fps(fps: i64) -> Result<()> {
+    let file = state_file()?;
+    fs::create_dir_all(file.parent().unwrap())?;
+    fs::write(&file, fps.to_string()).with_context(|| format!("writing {}", file.display()))
+}
+
+fn apply(fps: i64) -> bool {
+    ENGINE.with(|engine| engine.borrow_mut().apply(fps))
+}
+
+pub fn spawn_window() -> Result<()> {
+    Command::new(std::env::current_exe()?).arg(FPS_FLAG).spawn()?;
+    Ok(())
+}
+
+pub fn run_window() -> Result<()> {
+    unsafe {
+        let instance = GetModuleHandleW(null());
+        let class_name = wide(TRAY_CLASS);
+        close_other_trays(&class_name);
+        let mut class: WNDCLASSW = zeroed();
+        class.lpfnWndProc = Some(window_proc);
+        class.hInstance = instance;
+        class.lpszClassName = class_name.as_ptr();
+        RegisterClassW(&class);
+
+        let title = wide(TRAY_TITLE);
+        let window = CreateWindowExW(WS_EX_TOOLWINDOW, class_name.as_ptr(), title.as_ptr(), WS_OVERLAPPED, 0, 0, 0, 0, 0, 0, instance, null());
+
+        let mut icon: NOTIFYICONDATAW = zeroed();
+        icon.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+        icon.hWnd = window;
+        icon.uID = TRAY_ICON_ID;
+        icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        icon.uCallbackMessage = WM_TRAYICON;
+        icon.hIcon = LoadIconW(instance, ICON_RESOURCE as *const u16);
+        icon.szTip[..title.len()].copy_from_slice(&title);
+        Shell_NotifyIconW(NIM_ADD, &icon);
+
+        SetTimer(window, TIMER_ID, TIMER_INTERVAL_MS, None);
+
+        let mut message: MSG = zeroed();
+        while GetMessageW(&mut message, 0, 0, 0) > 0 {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+
+        Shell_NotifyIconW(NIM_DELETE, &icon);
+    }
+    Ok(())
+}
+
+unsafe fn close_other_trays(class_name: &[u16]) {
+    let mut window = FindWindowExW(0, 0, class_name.as_ptr(), null());
+    while window != 0 {
+        PostMessageW(window, WM_CLOSE, 0, 0);
+        window = FindWindowExW(0, window, class_name.as_ptr(), null());
+    }
+}
+
+unsafe extern "system" fn window_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match message {
+        WM_TRAYICON => {
+            let event = (lparam & LOW_WORD) as u32;
+            if event == WM_RBUTTONUP || event == WM_LBUTTONUP {
+                show_menu(window);
+            }
+            0
+        }
+        WM_COMMAND => {
+            handle_command(window, (wparam & LOW_WORD as usize) as u32);
+            0
+        }
+        WM_TIMER => {
+            if apply(saved_fps()) {
+                SEEN_CLIENT.store(true, Ordering::Relaxed);
+            } else if SEEN_CLIENT.load(Ordering::Relaxed) || WAITED_SECONDS.fetch_add(1, Ordering::Relaxed) >= CLIENT_WAIT_SECONDS {
+                DestroyWindow(window);
+            }
+            0
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            0
+        }
+        _ => DefWindowProcW(window, message, wparam, lparam),
+    }
+}
+
+unsafe fn show_menu(window: HWND) {
+    let menu = CreatePopupMenu();
+    let current = saved_fps();
+    let mut checked = MENU_BASE;
+    for (index, (label, value)) in OPTIONS.iter().enumerate() {
+        let id = MENU_BASE + index as u32;
+        AppendMenuW(menu, MF_STRING, id as usize, wide(label).as_ptr());
+        if *value == current {
+            checked = id;
+        }
+    }
+    let last = MENU_BASE + OPTIONS.len() as u32 - 1;
+    CheckMenuRadioItem(menu, MENU_BASE, last, checked, MF_BYCOMMAND);
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    AppendMenuW(menu, MF_STRING, MENU_EXIT as usize, wide("Exit").as_ptr());
+
+    let mut point: POINT = zeroed();
+    GetCursorPos(&mut point);
+    SetForegroundWindow(window);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, window, null());
+    DestroyMenu(menu);
+}
+
+unsafe fn handle_command(window: HWND, id: u32) {
+    if id == MENU_EXIT {
+        DestroyWindow(window);
+        return;
+    }
+    let Some(&(_, value)) = id.checked_sub(MENU_BASE).and_then(|index| OPTIONS.get(index as usize)) else {
+        return;
+    };
+    let _ = save_fps(value);
+    apply(value);
+}

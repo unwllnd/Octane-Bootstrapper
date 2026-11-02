@@ -1,0 +1,32 @@
+[package]
+name = "octane-voice"
+version = "1.1.0"
+edition = "2021"
+description = "Octane voice chat"
+
+[[bin]]
+name = "OctaneVoice"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+cpal = "0.18.2"
+futures = "0.3"
+livekit = { version = "0.9.3", features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[build-dependencies]
+embed-resource = "3"
+ico = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+trim-paths = "all"

@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod app;
 mod log;
 mod microphone;
 mod room;
@@ -10,6 +11,7 @@ use std::env;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
+use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio::time;
 use windows::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
@@ -23,14 +25,14 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let ticket = value_after(&args, "--ticket");
     let client = value_after(&args, "--client-pid").and_then(|pid| pid.parse().ok());
-    let (Some(ticket), Some(client)) = (ticket, client) else {
-        log!("expected --ticket <ticket> --client-pid <pid>");
+    let Some(client) = client else {
+        log!("expected --client-pid <pid>");
         return;
     };
 
     Runtime::new().unwrap().block_on(async {
         tokio::select! {
-            result = talk(&ticket) => {
+            result = voice(ticket) => {
                 if let Err(error) = result {
                     log!("stopped: {error:#}");
                 }
@@ -41,13 +43,21 @@ fn main() {
 }
 
 
-async fn talk(ticket: &str) -> Result<()> {
-    let site = Site::open(ticket).await?;
+async fn voice(ticket: Option<String>) -> Result<()> {
+    let Some(ticket) = ticket else {
+        return app::talk().await;
+    };
 
+    let site = Site::open(json!({ "ticket": ticket })).await?;
+    talk(&site).await
+}
+
+
+async fn talk(site: &Site) -> Result<()> {
     loop {
         match site.wait_for_grant().await {
             Ok(Reply::Ok(grant)) => {
-                if let Err(error) = room::join(&site, grant).await {
+                if let Err(error) = room::join(site, grant).await {
                     log!("voice: {error:#}");
                 }
             }

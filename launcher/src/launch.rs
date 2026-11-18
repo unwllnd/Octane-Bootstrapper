@@ -59,6 +59,7 @@ fn install_and_start(launch: Launch, args: &[String], status: &Status) -> Result
         }
         Launch::App => {
             install_client(&http, &launcher, status)?;
+            install_voice(&http, status);
             start(watch::CLIENT_FLAG, &CLIENT, &["--app".to_string()], status)
         }
         Launch::Studio(link) => {

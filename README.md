@@ -8,5 +8,5 @@ Official Octane bootstrapper (launcher).
 
 | File | SHA-256 |
 |---|---|
-| OctanePlayerLauncher.exe 1.3.0 | `9ec083279149c1289a436e8d3fbba775455af39d3c10c48775a05ad5a253e998` |
-| OctaneVoice.exe 1.1.0 | `b78be1cfd4910176ea7bb7b397ef10e959ea0afdae7846be91f4321669e0a31a` |
+| OctanePlayerLauncher.exe 1.3.1 | `0c40d26a32642eb6235cbb9aa94340821a9317ea602c017eba4b79ebbe680f61` |
+| OctaneVoice.exe 1.1.1 | `e12708fd92ce7891ede8c2095c369f151676b24b29f6da1c5ce7bb2f405e63ce` |

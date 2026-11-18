@@ -42,15 +42,15 @@ pub enum Reply<T> {
 
 
 impl Site {
-    pub async fn open(ticket: &str) -> Result<Site> {
+    pub async fn open(login: Value) -> Result<Site> {
         let http = Client::builder().timeout(Duration::from_secs(40)).build()?;
         loop {
-            match post::<Session>(&http, "/voice-api/session", json!({ "ticket": ticket })).await {
+            match post::<Session>(&http, "/voice-api/session", login.clone()).await {
                 Ok(Reply::Ok(session)) => {
                     log!("session for user {}", session.user_id);
                     return Ok(Site { http, session: session.id });
                 }
-                Ok(Reply::Denied) => bail!("ticket rejected"),
+                Ok(Reply::Denied) => bail!("login rejected"),
                 Ok(Reply::Wait) => {}
                 Err(error) => log!("session: {error:#}"),
             }

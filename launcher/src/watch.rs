@@ -33,12 +33,12 @@ pub fn client(args: &[String]) -> Result<()> {
     let ticket = value_after(args, "-t");
     let place = value_after(args, "-j").and_then(|url| place_in(&url));
     discord::show(discord::PLAY, ticket.clone(), place)?;
+    start_voice(ticket.as_deref(), client.id());
 
-    let Some(ticket) = ticket else {
+    if ticket.is_none() {
         return watch(client, "Roblox", "Octane");
-    };
+    }
 
-    start_voice(&ticket, client.id());
     let tray = fps::show_tray(exe, client.id());
     watch(client, "Roblox", "Octane")?;
     tray.join().ok();
@@ -86,17 +86,18 @@ fn watch(mut program: Child, from: &str, to: &str) -> Result<()> {
 }
 
 
-fn start_voice(ticket: &str, client: u32) {
+fn start_voice(ticket: Option<&str>, client: u32) {
     if !VOICE.exe().is_file() {
         return;
     }
 
+    let mut voice = Command::new(VOICE.exe());
+    if let Some(ticket) = ticket {
+        voice.args(["--ticket", ticket]);
+    }
+
     let client = client.to_string();
-    Command::new(VOICE.exe())
-        .args(["--ticket", ticket, "--client-pid", &client])
-        .current_dir(VOICE.dir())
-        .spawn()
-        .ok();
+    voice.args(["--client-pid", &client]).current_dir(VOICE.dir()).spawn().ok();
 }
 
 
